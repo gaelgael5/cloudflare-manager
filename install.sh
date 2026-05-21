@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# PATH complet — LXC minimal peut avoir un PATH tronqué
+# ---------------------------------------------------------------------------
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 REPO_URL="https://github.com/gaelgael5/cloudflare-manager.git"
 INSTALL_DIR="/opt/cloudflare-manager"
 CONF_DIR="/etc/cloudflare-manager"
 BAK_DIR="${CONF_DIR}/backups"
 ENV_FILE="${CONF_DIR}/.env"
 SERVICE_FILE="/etc/systemd/system/cloudflare-manager.service"
-PYTHON_BIN="python3"
-PIP_BIN="pip3"
+VENV_DIR="${INSTALL_DIR}/.venv"
 
 # ---------------------------------------------------------------------------
 # Couleurs
 # ---------------------------------------------------------------------------
 GREEN="\033[0;32m"; YELLOW="\033[1;33m"; RED="\033[0;31m"; NC="\033[0m"
-info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Root check
@@ -26,20 +30,18 @@ error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 # ---------------------------------------------------------------------------
 # Dépendances système
 # ---------------------------------------------------------------------------
-info "Vérification des dépendances..."
+info "Installation des paquets système..."
 apt-get update -qq
+apt-get install -y -qq python3 python3-pip python3-venv git curl
 
-for pkg in python3 python3-pip git curl; do
-    if ! dpkg -l "$pkg" &>/dev/null; then
-        info "Installation de $pkg..."
-        apt-get install -y -qq "$pkg"
-    else
-        info "$pkg déjà installé"
-    fi
+# Vérifie que les binaires sont bien dans le PATH
+for bin in python3 git curl; do
+    command -v "$bin" &>/dev/null || error "Binaire '$bin' introuvable après installation"
 done
+info "Dépendances système OK"
 
 # ---------------------------------------------------------------------------
-# Repo
+# Repo — clone ou pull
 # ---------------------------------------------------------------------------
 if [ -d "${INSTALL_DIR}/.git" ]; then
     info "Mise à jour du repo existant..."
@@ -50,10 +52,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Dépendances Python
+# Virtualenv Python
 # ---------------------------------------------------------------------------
+info "Création du virtualenv Python..."
+python3 -m venv "$VENV_DIR"
+
 info "Installation des dépendances Python..."
-$PIP_BIN install -q -r "${INSTALL_DIR}/requirements.txt" --break-system-packages
+"${VENV_DIR}/bin/pip" install -q -r "${INSTALL_DIR}/requirements.txt"
 
 # ---------------------------------------------------------------------------
 # Répertoires de conf
@@ -63,7 +68,7 @@ mkdir -p "$CONF_DIR" "$BAK_DIR"
 chmod 750 "$CONF_DIR" "$BAK_DIR"
 
 # ---------------------------------------------------------------------------
-# Fichier .env (ne pas écraser si existe)
+# Fichier .env — ne pas écraser si existe
 # ---------------------------------------------------------------------------
 if [ ! -f "$ENV_FILE" ]; then
     info "Création du fichier .env..."
@@ -93,7 +98,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${PYTHON_BIN} -m uvicorn main:app --host 0.0.0.0 --port 8000
+ExecStart=${VENV_DIR}/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
